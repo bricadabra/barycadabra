@@ -1,0 +1,42 @@
+{
+  "name": "barycadabra",
+  "version": "1.0.0",
+  "type": "module",
+  "license": "MIT",
+  "packageManager": "pnpm@10.33.0",
+  "description": "Find the bar that is fair to everyone: a meeting point balanced on travel time",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bricadabra/barycadabra.git"
+  },
+  "keywords": [
+    "meeting-point",
+    "barycentre",
+    "bar",
+    "travel-time",
+    "maplibre",
+    "openstreetmap"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test:smoke": "node tests/smoke.mjs",
+    "test": "node --test tests/unit.mjs"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "puppeteer-core": "^24.0.0",
+    "tailwindcss": "^4.3.3",
+    "vite": "^7.3.0"
+  },
+  "dependencies": {
+    "@fontsource-variable/manrope": "^5.3.0",
+    "maplibre-gl": "^5.9.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

@@ -1,0 +1,249 @@
+@import "tailwindcss";
+
+/*
+ * barycadabra — a dark console over a bright map, like every Bricadabra tool.
+ *
+ * The map is a document: pale, quiet, a town you read distances off. What you
+ * operate — the group, the ranking, the trips — is a charcoal console beside
+ * it. On the console the spark marks what you act on and the score you are
+ * after; nothing else is coloured.
+ */
+
+@theme {
+  /* Graphite drawn from the Bricadabra charcoal (--color-ink). */
+  --color-shell: #15181f;
+  --color-panel: #1c2029;
+  --color-raised: #262b36;
+  --color-line: #343a47;
+  --color-line-strong: #4b5263;
+  --color-text: #eef0f4;
+  --color-soft: #a9afbc;
+  /* 4.5:1 on panel and raised (4.7:1), so it can carry text. */
+  --color-faint: #8e95a5;
+
+  /* The Bricadabra spark, dark-background variant: controls, focus and the
+     score. Text on it is charcoal (10.4:1). */
+  --color-primary: #f5b841;
+  --color-on-primary: #15181f;
+  --color-primary-hover: #f8c766;
+
+  /* The map side: charcoal ink and white paper, and the light-background
+     spark, since the map is light. */
+  --color-ink: #1c2029;
+  --color-paper: #ffffff;
+  --color-spark-light: #e0961a;
+
+  /* Who is ahead and who is behind on a trip, against the group mean. */
+  --color-ahead: #5eead4;
+  --color-behind: #ff9e64;
+
+  --font-sans: "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  html { color-scheme: dark; }
+  body {
+    font-family: var(--font-sans);
+    background: var(--color-shell);
+    color: var(--color-text);
+  }
+  .tnum { font-variant-numeric: tabular-nums; }
+  :focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: var(--color-shell); }
+  ::-webkit-scrollbar-thumb { background: var(--color-line-strong); border: 3px solid var(--color-shell); }
+}
+
+@layer components {
+  .field {
+    width: 100%;
+    min-width: 0;
+    border: 1px solid var(--color-line-strong);
+    border-radius: 0.375rem;
+    background: var(--color-raised);
+    padding: 0.5rem 0.75rem;
+    font-size: 0.9375rem;
+    color: var(--color-text);
+  }
+  .field::placeholder { color: var(--color-faint); }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    border-radius: 0.375rem;
+    padding: 0.5rem 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    background: var(--color-raised);
+    color: var(--color-text);
+  }
+  .btn:hover { background: var(--color-line); }
+  .btn-primary { background: var(--color-primary); color: var(--color-on-primary); }
+  .btn-primary:hover { background: var(--color-primary-hover); }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  /* Transport mode, as a segmented choice: three options, all visible. */
+  .seg { display: flex; gap: 0.25rem; border-radius: 0.375rem; background: var(--color-raised); padding: 0.25rem; }
+  .seg label { flex: 1 1 0%; }
+  .seg input { position: absolute; opacity: 0; pointer-events: none; }
+  .seg span {
+    display: block;
+    text-align: center;
+    padding: 0.35rem 0.25rem;
+    border-radius: 0.25rem;
+    font-size: 0.875rem;
+    color: var(--color-soft);
+    cursor: pointer;
+  }
+  .seg input:checked + span { background: var(--color-primary); color: var(--color-on-primary); font-weight: 600; }
+  .seg input:focus-visible + span { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+
+  .num {
+    display: inline-grid;
+    place-items: center;
+    flex-shrink: 0;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    background: var(--color-text);
+    color: var(--color-on-primary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .score {
+    font-weight: 600;
+    font-size: 1.75rem;
+    line-height: 0.9;
+    letter-spacing: -0.04em;
+    color: var(--color-primary);
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+
+  .result { border-bottom: 1px solid var(--color-line); }
+  .result > button { width: 100%; text-align: left; cursor: pointer; }
+  .result > button:hover { background: var(--color-raised); }
+  .result.is-picked { background: var(--color-raised); box-shadow: inset 3px 0 0 var(--color-primary); }
+
+  .ahead { color: var(--color-ahead); }
+  .behind { color: var(--color-behind); }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--color-line-strong);
+    border-radius: 999px;
+    padding: 0.2rem 0.65rem;
+    font-size: 0.8125rem;
+    color: var(--color-soft);
+  }
+  .chip:hover { color: var(--color-text); border-color: var(--color-soft); }
+
+  /* Padded to a finger's width: two bare letters are a 12 px target. */
+  .lang-btn { padding: 0.5rem 0.4rem; color: var(--color-faint); cursor: pointer; }
+  .lang-btn:hover { color: var(--color-text); }
+  .lang-btn.is-active { color: var(--color-primary); }
+}
+
+/* ------------------------------------------------------------------ pins */
+/* On the light map: charcoal people, spark bars (light-background spark). */
+
+.pin {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  font: 700 13px/1 var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--color-ink) 45%, transparent);
+}
+.pin-person { background: var(--color-ink); color: var(--color-paper); border: 2px solid var(--color-paper); }
+.pin-bar { background: var(--color-paper); color: var(--color-ink); border: 2px solid var(--color-spark-light); border-radius: 6px; }
+.pin-bar.is-picked { background: var(--color-primary); border-color: var(--color-ink); width: 34px; height: 34px; font-size: 15px; z-index: 2; }
+
+/* --------------------------------------------------------------- maplibre */
+
+.maplibregl-ctrl-attrib {
+  background: color-mix(in srgb, var(--color-paper) 85%, transparent) !important;
+  font-family: var(--font-sans);
+  font-size: 0.625rem;
+}
+.maplibregl-ctrl-attrib a { color: var(--color-line-strong) !important; }
+.maplibregl-ctrl-group { border: 1px solid color-mix(in srgb, var(--color-ink) 15%, transparent); box-shadow: none; }
+.maplibregl-popup-content { font-family: var(--font-sans); color: var(--color-ink); font-size: 0.8125rem; }
+
+/* ------------------------------------------------------------ suggestions */
+
+.suggestions {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 0.25rem);
+  z-index: 40;
+  max-height: 16rem;
+  overflow-y: auto;
+  border: 1px solid var(--color-line-strong);
+  border-radius: 0.375rem;
+  background: var(--color-raised);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--color-shell) 70%, transparent);
+}
+.suggestions [role="option"] {
+  padding: 0.6rem 0.75rem;
+  font-size: 0.875rem;
+  cursor: pointer;
+  border-bottom: 1px solid var(--color-line);
+}
+.suggestions [role="option"]:last-child { border-bottom: 0; }
+.suggestions [role="option"]:hover { background: var(--color-line); }
+.suggestions [role="option"][aria-selected="true"] {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
+/* ------------------------------------------------------------------ infos */
+
+.infos {
+  margin: auto;
+  width: min(36rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  border: 1px solid var(--color-line-strong);
+  border-radius: 0.5rem;
+  background: var(--color-panel);
+  color: var(--color-text);
+}
+.infos::backdrop { background: color-mix(in srgb, var(--color-shell) 75%, transparent); }
+.link { color: var(--color-text); text-decoration: underline; text-decoration-color: var(--color-line-strong); text-underline-offset: 2px; }
+.link:hover { text-decoration-color: var(--color-primary); }
+
+/* ---------------------------------------------------------------- toggles */
+/* A multiple choice shown whole: each option a pill that lights when on. */
+
+.toggle input { position: absolute; opacity: 0; pointer-events: none; }
+.toggle span {
+  display: inline-block;
+  border: 1px solid var(--color-line-strong);
+  border-radius: 999px;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.8125rem;
+  color: var(--color-soft);
+  cursor: pointer;
+}
+.toggle span:hover { color: var(--color-text); border-color: var(--color-soft); }
+.toggle input:checked + span { background: var(--color-primary); border-color: var(--color-primary); color: var(--color-on-primary); font-weight: 600; }
+.toggle input:focus-visible + span { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+
+/* A number field that stays a number field: no spinner eating its width. */
+.limit { -moz-appearance: textfield; }
+.limit::-webkit-inner-spin-button, .limit::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
