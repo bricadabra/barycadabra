@@ -1,6 +1,6 @@
 /**
- * The pure modules: score, travel engine, venues, share link, geocoder
- * parsing. No network, no browser.
+ * The pure modules: score, venues, share link, links, geocoder parsing (the
+ * travel engine has tests/travel.mjs). No network, no browser.
  *
  *   pnpm test
  */
@@ -8,23 +8,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { baryScore, rank, tightest } from "../src/score.js";
-import { loadTravelData, travelTimes, searchArea, distanceKm, meetingZone } from "../src/travel.js";
+import { baryScore, rank, blocker } from "../src/score.js";
 import { encodeSession, decodeSession, sanitize, sanitizeWeight, sanitizeCategories } from "../src/session.js";
-import { venuesIn, loadVenues, categoryOf } from "../src/venues.js";
+import { toPlace } from "../src/venues.js";
 import { safeUrl, esc } from "../src/html.js";
+import { osmUrl } from "../src/links.js";
 import { lookup, covered } from "../src/geocode.js";
 
-// A uniform 30 km/h grid over Rennes, injected instead of downloaded.
-const flatGrid = async () => ({
-  metadata: { gridSize: 0.02, bounds: { minLon: -5.5, minLat: 41, maxLon: 9.5, maxLat: 51.5 } },
-  grid: Object.fromEntries(
-    Array.from({ length: 400 }, (_, i) => [`${190 + (i % 20)},${350 + Math.floor(i / 20)}`, 30]),
-  ),
-});
-
-const rennes = { lat: 48.111, lng: -1.68 };
-const east = { lat: 48.111, lng: -1.6 };
 
 test("baryScore: everyone already there is 100", () => {
   assert.equal(baryScore([0, 0, 0]).score, 100);
@@ -51,50 +41,20 @@ test("rank: best first, closer wins ties", () => {
   assert.deepEqual(ranked.map((r) => r.id), ["near", "fair", "far"]);
 });
 
-test("travel: refuses to compute before the data is loaded", () => {
-  assert.throws(() => travelTimes([{ ...rennes, mode: "foot" }], [east]), /not loaded/);
+test("venues: an engine record becomes a place, absent fields as null", () => {
+  const place = toPlace({ lat: 48.11, lng: -1.68, osmId: "w2", category: "park", name: "Thabor", postcode: "35000", city: "Rennes" });
+  assert.deepEqual(place, {
+    id: "w2", osmId: "w2", category: "park", name: "Thabor", address: "35000 Rennes",
+    website: null, phone: null, hours: null, lat: 48.11, lng: -1.68,
+  });
+  assert.equal(toPlace({ lat: 0, lng: 0, osmId: "n1", category: "bar", address: "1 rue X" }).address, "1 rue X");
 });
 
-test("travel: times grow with distance and follow the grid speed", async () => {
-  await loadTravelData(["bike"], flatGrid);
-  const [[near], [far]] = travelTimes([{ ...rennes, mode: "bike" }], [{ lat: 48.111, lng: -1.67 }, east]);
-  assert.ok(far > near);
-  // 30 km/h on the straight distance times the medium detour factor.
-  const expected = ((distanceKm(rennes, east) * 1.35) / 30) * 60;
-  assert.ok(Math.abs(far - expected) < 0.01, `${far} vs ${expected}`);
-});
-
-test("travel: a failed download is not cached", async () => {
-  await assert.rejects(loadTravelData(["car"], async () => { throw new Error("offline"); }));
-  await loadTravelData(["car"], flatGrid);
-  assert.equal(travelTimes([{ ...rennes, mode: "car" }], [east]).length, 1);
-});
-
-test("searchArea: centred on the group, wide enough for the farthest pair", () => {
-  const area = searchArea([rennes, east]);
-  assert.ok(Math.abs(area.lng - -1.64) < 1e-9);
-  assert.ok(area.radiusKm >= distanceKm(rennes, east) / 2);
-  assert.equal(searchArea([rennes, rennes]).radiusKm, 3);
-});
-
-test("venuesIn: keeps the disc and the categories asked for", () => {
-  const area = { ...rennes, radiusKm: 1 };
-  const all = [{ ...rennes, id: 1, category: "bar" }, { ...east, id: 2, category: "bar" }, { ...rennes, id: 3, category: "park" }];
-  assert.deepEqual(venuesIn(all, area, ["bar"]).map((v) => v.id), [1]);
-  assert.deepEqual(venuesIn(all, area, ["bar", "park"]).map((v) => v.id), [1, 3]);
-});
-
-test("venues: category from the pipeline, else mapped from the OSM amenity", async () => {
-  const point = (properties) => ({ geometry: { coordinates: [-1.68, 48.11] }, properties });
-  const all = await loadVenues(async () => ({
-    features: [
-      point({ osmId: "1", amenity: "pub" }),
-      point({ id: "w2", category: "park", name: "Thabor" }),
-      point({ osmId: "3", amenity: "nightclub" }),
-    ],
-  }));
-  assert.deepEqual(all.map((v) => [v.id, v.category]), [["1", "bar"], ["w2", "park"]]);
-  assert.equal(categoryOf({ category: "spaceport", amenity: "bar" }), "bar");
+test("links: OSM ids name their type", () => {
+  assert.equal(osmUrl("n123"), "https://www.openstreetmap.org/node/123");
+  assert.equal(osmUrl("w45"), "https://www.openstreetmap.org/way/45");
+  assert.equal(osmUrl("r6"), "https://www.openstreetmap.org/relation/6");
+  assert.equal(osmUrl("x9"), null);
 });
 
 test("share link: round trip of group, settings and picked place, accents included", () => {
@@ -133,24 +93,18 @@ test("score: the weight moves the balance between proximity and fairness", () =>
   assert.equal(baryScore(even, 0.85).score, baryScore(even).score);
 });
 
-test("rank: a time limit is a hard filter; tightest names who blocks", () => {
+test("rank: out of reach and over a limit are hard filters; blocker says who and why", () => {
   const places = [{ id: "a" }, { id: "b" }];
   const times = [[10, 40], [30, 30]];
   assert.deepEqual(rank(places, times, { limits: [null, 35] }).map((r) => r.id), ["b"]);
   assert.deepEqual(rank(places, times, { limits: [5, 35] }), []);
-  assert.equal(tightest(times, [5, 35]), 0);
-  assert.equal(tightest(times, [null, null]), -1);
-});
-
-test("meetingZone: cells where everyone arrives in time, as GeoJSON", async () => {
-  await loadTravelData(["bike"], flatGrid);
-  const group = [{ ...rennes, mode: "bike" }, { ...east, mode: "bike" }];
-  const tight = meetingZone(group, 10);
-  const loose = meetingZone(group, 30);
-  assert.equal(loose.type, "FeatureCollection");
-  assert.ok(loose.features.length > tight.features.length);
-  assert.ok(loose.features.every((f) => f.geometry.type === "Polygon" && f.properties.max <= 30));
-  assert.equal(meetingZone(group, 1).features.length, 0);
+  assert.deepEqual(blocker(times, [5, 35]), { who: 0, why: "limit" });
+  assert.deepEqual(blocker(times, [null, null]), { who: -1, why: null });
+  // A walker who cannot reach anything: out of reach, whatever the limits.
+  const far = [[12, Infinity], [15, Infinity]];
+  assert.deepEqual(rank(places, far), []);
+  assert.deepEqual(blocker(far, [null, null]), { who: 1, why: "reach" });
+  assert.deepEqual(rank(places, [[12, Infinity], [15, 20]]).map((r) => r.id), ["b"]);
 });
 
 test("html: escapes markup and keeps only web links", () => {

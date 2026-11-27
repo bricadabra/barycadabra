@@ -30,34 +30,38 @@ export function baryScore(minutes, weight = DEFAULT_WEIGHT) {
   };
 }
 
-/** Whether every trip keeps within its person's limit (null: no limit). */
-export const withinLimits = (minutes, limits) => minutes.every((m, k) => limits[k] == null || m <= limits[k]);
+/**
+ * Whether every trip is possible (travel.js returns Infinity beyond a mode's
+ * reach) and keeps within its person's limit (null: no limit).
+ */
+export const admissible = (minutes, limits) =>
+  minutes.every((m, k) => Number.isFinite(m) && (limits[k] == null || m <= limits[k]));
 
 /**
  * Rank places for a group, best first.
  *
  * `times[p]` holds the trips to `places[p]`, as travel.js `travelTimes`
- * returns them. A place that breaks anyone's time limit is left out — a limit
- * is a hard constraint, not a preference. Ties keep the closer place.
+ * returns them. A place someone cannot reach, or only beyond their time
+ * limit, is left out — hard constraints, not preferences. Ties keep the closer
+ * place.
  */
 export function rank(places, times, { weight = DEFAULT_WEIGHT, limits = [] } = {}) {
   return places
-    .map((place, i) => ({ ...place, ...baryScore(times[i], weight) }))
-    .filter((r) => withinLimits(r.minutes, limits))
+    .flatMap((place, i) => (admissible(times[i], limits) ? [{ ...place, ...baryScore(times[i], weight) }] : []))
     .sort((a, b) => b.score - a.score || a.mean - b.mean);
 }
 
 /**
- * The person whose limit rules out the most places, or -1: what to tell the
- * group when nothing is left.
+ * What to tell the group when nothing is left: the person who rules out the
+ * most places, and why — "reach" (out of reach of their mode) or "limit"
+ * (their own time limit). `{ who: -1 }` when no one rules anything out.
  */
-export function tightest(times, limits) {
-  let worst = -1;
-  let most = 0;
+export function blocker(times, limits) {
+  let best = { who: -1, why: null, count: 0 };
   limits.forEach((limit, k) => {
-    if (limit == null) return;
-    const out = times.filter((t) => t[k] > limit).length;
-    if (out > most) [worst, most] = [k, out];
+    const reach = times.filter((t) => !Number.isFinite(t[k])).length;
+    const over = limit == null ? 0 : times.filter((t) => Number.isFinite(t[k]) && t[k] > limit).length;
+    if (reach + over > best.count) best = { who: k, why: reach >= over ? "reach" : "limit", count: reach + over };
   });
-  return worst;
+  return { who: best.who, why: best.why };
 }

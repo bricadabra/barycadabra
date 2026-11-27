@@ -16,8 +16,8 @@ import { initI18n, setLang, getLang, onLangChange, t } from "./src/i18n.js";
 import { geocode, lookup } from "./src/geocode.js";
 import { combobox } from "./src/combobox.js";
 import { loadTravelData, travelTimes, searchArea, meetingZone } from "./src/travel.js";
-import { loadVenues, venuesIn } from "./src/venues.js";
-import { rank, tightest } from "./src/score.js";
+import { placesIn } from "./src/venues.js";
+import { rank, blocker } from "./src/score.js";
 import { encodeSession, decodeSession, sanitizeLimit, MAX_PARTICIPANTS, LIMIT_RANGE } from "./src/session.js";
 import { loadGroup, saveGroup, loadPrefs, savePrefs } from "./src/store.js";
 import { esc, safeUrl, minutes } from "./src/html.js";
@@ -34,7 +34,7 @@ const state = {
   categories: ["bar"],
   zone: null, // minutes, or null for no meeting zone
   ranking: null, // null: not searched; [] searched, nothing passed
-  blocked: -1, // when nothing passed the limits: whose limit rules out the most
+  blocked: null, // when nothing passed: { who, why } — who rules out the most, "reach" or "limit"
   shown: PAGE,
   picked: -1,
   busy: false,
@@ -136,13 +136,27 @@ async function search(venueId = null) {
   state.error = null;
   render();
   try {
-    const [venues] = await Promise.all([loadVenues(), loadTravelData(state.group.map((p) => p.mode))]);
+    // The mesh tiles around the group, then the venue tiles around the best
+    // meeting point, of the categories asked for: two rounds of HTTP range
+    // requests into the PMTiles archives, never a whole file.
+    // Each step leaves a measure (search:mesh, :area, :venues, :rank) so what
+    // a search costs can be read in the browser's performance timeline.
+    const step = (name, from) => performance.measure(`search:${name}`, from);
+    performance.mark("s0");
+    await loadTravelData(state.group);
+    step("mesh", "s0");
+    performance.mark("s1");
     const area = searchArea(state.group);
-    const candidates = venuesIn(venues, area, state.categories);
+    step("area", "s1");
+    performance.mark("s2");
+    const candidates = await placesIn(area, state.categories);
+    step("venues", "s2");
+    performance.mark("s3");
     const times = travelTimes(state.group, candidates);
     const limits = state.group.map((p) => p.max);
     state.ranking = rank(candidates, times, { weight: state.weight, limits });
-    state.blocked = candidates.length && !state.ranking.length ? tightest(times, limits) : -1;
+    state.blocked = candidates.length && !state.ranking.length ? blocker(times, limits) : null;
+    step("rank", "s3");
     showArea(area);
     drawZone();
     // The place asked for stays open if it is still near the top (a shared
@@ -231,7 +245,7 @@ function venueHTML(v, i) {
           ${site ? `<a class="chip" href="${esc(site)}" target="_blank" rel="noopener noreferrer">${t("results.website")}</a>` : ""}
           ${v.phone ? `<a class="chip" href="tel:${esc(v.phone.replace(/[^\d+]/g, ""))}">${esc(v.phone)}</a>` : ""}
           <a class="chip" href="${esc(searchUrl(v))}" target="_blank" rel="noopener noreferrer">Google Maps</a>
-          ${v.osmId ? `<a class="chip" href="${esc(osmUrl(v.osmId))}" target="_blank" rel="noopener noreferrer">OpenStreetMap</a>` : ""}
+          ${osmUrl(v.osmId) ? `<a class="chip" href="${esc(osmUrl(v.osmId))}" target="_blank" rel="noopener noreferrer">OpenStreetMap</a>` : ""}
         </div>
       </div>`
     : "";
@@ -256,7 +270,14 @@ function resultsHTML() {
   if (state.busy) return note(t("search.loading"));
   if (!state.ranking) return "";
   if (!state.ranking.length) {
-    if (state.blocked >= 0) return note(esc(t("search.limited", { name: state.group[state.blocked].name })), "text-behind");
+    const { who, why } = state.blocked ?? {};
+    if (who >= 0) {
+      const p = state.group[who];
+      // Out of reach names the mode and what to try instead; a limit names
+      // the person whose limit to relax.
+      const key = why === "reach" ? `search.reach.${p.mode}` : "search.limited";
+      return note(esc(t(key, { name: p.name })), "text-behind");
+    }
     return note(t("search.none"));
   }
   const rest = state.ranking.length - state.shown;

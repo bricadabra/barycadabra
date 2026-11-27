@@ -12,14 +12,15 @@
  * Skips itself cleanly when puppeteer-core or Chrome is absent: a useful
  * check, not a gate.
  *
- *   pnpm build && pnpm preview &
+ * On the local copy of the data (.cdn-local, served at /cdn-local by the
+ * preview server itself — vite.config.js):
+ *
+ *   VITE_CDN=/cdn-local pnpm build && pnpm preview &
  *   pnpm test:smoke
  *
- * With a local copy of the data (VITE_CDN at build time, same value here):
- *
- *   pnpm exec vite preview --config /dev/null --outDir .cdn-local --port 4000 &
- *   VITE_CDN=http://localhost:4000 pnpm build && pnpm preview &
- *   VITE_CDN=http://localhost:4000 pnpm test:smoke
+ * The last part opens real groups on the France mesh (Paris on foot, Lyon by
+ * car with Grenoble by bike, two walkers 20 km apart) and prints the cost of
+ * one cold search.
  *
  * SHOTS=<dir> saves a screenshot per viewport.
  */
@@ -230,9 +231,89 @@ async function run(width, height, label, mobile = false) {
   await page.close();
 }
 
+
+// ---- Real groups on the France mesh, each in a fresh browser context so the
+// download is a cold one. Prints what one search costs: kilobytes over the
+// wire from the CDN, and milliseconds to load and to compute.
+const SCENARIOS = [
+  {
+    label: "Paris on foot",
+    group: [
+      { name: "Alice", label: "Châtelet", lat: 48.8584, lng: 2.347, mode: "foot", max: null },
+      { name: "Bob", label: "Bastille", lat: 48.8532, lng: 2.3691, mode: "foot", max: null },
+      { name: "Chloé", label: "Montparnasse", lat: 48.8421, lng: 2.3219, mode: "foot", max: null },
+    ],
+    expect: "ranked",
+  },
+  {
+    label: "Lyon by car, Grenoble by bike",
+    group: [
+      { name: "Alice", label: "Lyon", lat: 45.764, lng: 4.8357, mode: "car", max: null },
+      { name: "Bob", label: "Grenoble", lat: 45.1885, lng: 5.7245, mode: "bike", max: null },
+    ],
+    expect: "ranked",
+  },
+  {
+    label: "Two walkers 20 km apart",
+    group: [
+      { name: "Alice", label: "Châtelet", lat: 48.8584, lng: 2.347, mode: "foot", max: null },
+      { name: "Bob", label: "Versailles", lat: 48.8049, lng: 2.1204, mode: "foot", max: null },
+    ],
+    expect: /Trop loin à pied pour (Alice|Bob)/,
+  },
+];
+
+async function scenario({ label, group: people, expect }) {
+  const context = await browser.createBrowserContext();
+  const page = await context.newPage();
+  await page.setViewport({ width: 1366, height: 850 });
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  // Every CDN response: its size, and for the archives, that it was a range.
+  const cdn = [];
+  page.on("response", (r) => {
+    if (!r.url().includes("/cdn-local/")) return;
+    const range = r.request().headers().range ?? null;
+    cdn.push({ url: r.url(), status: r.status(), range, bytes: Number(r.headers()["content-length"] ?? 0) });
+  });
+  await page.goto(`${URL}?s=${encodeSession({ group: people, weight: 0.85, categories: ["bar"] })}`, { waitUntil: "domcontentloaded" });
+  await page.waitForFunction(() => performance.getEntriesByName("search:rank").length > 0, { timeout: 60000 }).catch(() => {});
+  const m = await page.evaluate(() => {
+    const ms = (name) => Math.round(performance.getEntriesByName(name)[0]?.duration ?? NaN);
+    return {
+      dlMesh: ms("search:mesh"),
+      area: ms("search:area"),
+      dlVenues: ms("search:venues"),
+      rank: ms("search:rank"),
+      ranked: document.querySelectorAll("[data-pick]").length,
+      candidates: Number(/^(\d+)/.exec(document.querySelector("#results h2")?.textContent ?? "")?.[1] ?? 0),
+      text: document.querySelector("#results").textContent.trim().slice(0, 140),
+      times: [...document.querySelectorAll(".result.is-picked ul strong")].map((el) => el.textContent),
+    };
+  });
+  const kb = (f) => Math.round(cdn.filter(f).reduce((sum, r) => sum + r.bytes, 0) / 1024);
+  Object.assign(m, {
+    mesh: kb((r) => r.url.includes("/mesh-")),
+    venues: kb((r) => r.url.includes("/venues-")),
+    manifest: kb((r) => r.url.endsWith("manifest.json")),
+    files: cdn.length,
+  });
+  const ok = expect === "ranked" ? m.ranked > 0 && m.times.length === people.length : expect.test(m.text);
+  check(ok && !errors.length, `${label}: ${expect === "ranked" ? `${m.ranked} shown, open place ${m.times.join(" / ")}` : m.text}${errors.length ? ` (${errors.join(" | ")})` : ""}`);
+  // The archives weigh up to 65 MB: never fetched whole, only by ranges.
+  const whole = cdn.filter((r) => r.url.endsWith(".pmtiles") && (!r.range || r.status !== 206));
+  check(whole.length === 0, `${label}: every archive request is a 206 range (${cdn.length} requests)${whole.length ? ` — ${whole.map((r) => `${r.status} ${r.url}`).join(", ")}` : ""}`);
+  measures.push({ label, ...m });
+  await context.close();
+}
+
+const measures = [];
 try {
   await run(1366, 850, "desktop");
   await run(390, 844, "phone", true);
+  for (const s of SCENARIOS) await scenario(s);
+  console.log("\nper search (cold): CDN kB mesh + venues + manifest (files) · ms: mesh download, searchArea, venues download, ranking");
+  for (const m of measures) console.log(`  ${m.label}: ${m.mesh} + ${m.venues} + ${m.manifest} kB (${m.files} requests) · ${m.dlMesh} / ${m.area} / ${m.dlVenues} / ${m.rank} ms, ${m.candidates} ranked`);
 } finally {
   await browser.close();
 }

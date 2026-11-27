@@ -1,4 +1,4 @@
 node_modules/
 dist/
-.cdn-local/
+.cdn-local
 .DS_Store
